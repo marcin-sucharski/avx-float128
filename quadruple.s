@@ -108,7 +108,6 @@ global test_normalize
 	mov		[rsp-64],	r11
 	mov		qword [rsp-56],	0
 
-	;int3
 	vpxor		%3,	%3,	%3
 	vpcmpeqd	%4,	%4,	%4
 
@@ -120,16 +119,13 @@ global test_normalize
 	vpsubd		%2,	%2,	[value_15]
 	vpand		%2,	%2,	%5
 
-	;int3
 	vpmuldq		%4,	%2,	%4
 	vpmaxsd		%5,	%3,	%2
 	vpmaxsd		%6,	%3,	%4
 	vmovdqa		%2,	%4
 
 	vpslldqy	%7,	%1,	%5,	%8,	%4
-	;int3
 	vpsrldqy	%1,	%7,	%6,	%8,	%4
-	;int3
 	vpand		%1,	%1,	[zero_expsgn]
 	vpshufd		%2,	%2,	00111111b
 	vpshufhw	%2,	%2,	10000000b
@@ -169,12 +165,12 @@ quadruple_add_avx:
 	vpabsw		ymm5,	ymm5			; absolute value of exp diff
 	vpmaxud		ymm2,	ymm2,	ymm3
 	vpcmpeqd	ymm2,	ymm2,	ymm3		; compare fractions
+	vpshufd		ymm2,	ymm2,	0
 	vpblendvb	ymm3,	ymm0,	ymm1,	ymm2	; sort
 	vpcmpeqd	ymm15,	ymm15,	ymm15		; 0xFF...FF in ymm15
 	vpxor		ymm2,	ymm2,	ymm15		; negate ymm2
 	vpblendvb	ymm4,	ymm0,	ymm1,	ymm2
 	vmovdqa		ymm2,	ymm5			; save absolute exp diff to ymm2
-
 	; check output; ymm3 and ymm4 should be sorted according to exponent (exp3 > exp4)
 	; ymm2 holds exp3-exp4
 
@@ -278,6 +274,7 @@ quadruple_sub_avx:
 	vpabsw		ymm5,	ymm5			; absolute value of exp diff
 	vpmaxud		ymm2,	ymm2,	ymm3
 	vpcmpeqd	ymm2,	ymm2,	ymm3		; compare fractions
+	vpshufd		ymm2,	ymm2,	0
 	vpblendvb	ymm3,	ymm0,	ymm1,	ymm2	; sort
 	vpcmpeqd	ymm15,	ymm15,	ymm15		; 0xFF...FF in ymm15
 	vpxor		ymm2,	ymm2,	ymm15		; negate ymm2

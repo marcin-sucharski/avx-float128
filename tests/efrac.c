@@ -7,7 +7,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-    __m256i test_adddq(__m256i a, __m256i b);
+    __m256i test_efrac(__m256i value);
 #ifdef __cplusplus
 }
 #endif
@@ -28,10 +28,15 @@ int check_result(__int128_t result, __int128_t expected, int i, int j) {
 int main() {
     int128_data_t values[] = {
         {{0x0, 0x0}},
-        {{0x0, 0x1}},
-        {{0x8000000000000000, 0x0}},
-        {{0x8000000000000000, 0x1}},
-        {{0x8000000000000000, 0x8000000000000000}}
+        {{0xFFFFFFFFFFFFFFFF, 0x7000FFFFFFFFFFFF}},
+        {{0x0000000000000001, 0x0000000000000000}},
+        {{0x0000000000000000, 0x0000800000000000}}
+    };
+    int128_data_t results[] = {
+        {{0x0, 0x0}},
+        {{0xFFFFFFFFFFFFFFFF, 0x0001FFFFFFFFFFFF}},
+        {{0x0000000000000001, 0x0001000000000000}},
+        {{0x0000000000000000, 0x0001800000000000}}
     };
 
     int count = sizeof(values) / sizeof(values[0]);
@@ -39,20 +44,19 @@ int main() {
         for (int j = i; j < count; ++j) {
             __int128_t a = values[i].value;
             __int128_t b = values[j].value;
-            __int128_t result = a + b;
+            __int128_t result_a = results[i].value;
+            __int128_t result_b = results[j].value;
 
-            __int128_t in_a[2] = {a, b};
-            __int128_t in_b[2] = {b, a};
+            __int128_t vals[2] = {a, b};
 
-            __m256i in_a_val, in_b_val;
-            memcpy(&in_a_val, in_a, sizeof(in_a_val));
-            memcpy(&in_b_val, in_b, sizeof(in_b_val));
+            __m256i in_vals;
+            memcpy(&in_vals, vals, sizeof(vals));
 
-            __m256i out = test_adddq(in_a_val, in_b_val);
+            __m256i out = test_efrac(in_vals);
             __int128_t out_data[2];
             memcpy(out_data, &out, sizeof(out));
 
-            if (check_result(result, out_data[0], i, j) || check_result(result, out_data[1], j, i)) {
+            if (check_result(out_data[0], result_a, i, j) || check_result(out_data[1], result_b, j, i)) {
                 return 0;
             }
         }

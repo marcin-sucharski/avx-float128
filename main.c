@@ -4,8 +4,6 @@
 #include <time.h>
 #include <quadmath.h>
 
-#include <immintrin.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -175,21 +173,31 @@ void generate_data(int count, __float128 begin, __float128 *array) {
     __float128 curr = begin;
     for (i = 0; i < count; ++i) {
         curr *= -1.00005Q;
-        array[i] = begin; //curr;
+        array[i] = curr;
     }
 }
 
 void display_max_error(int count, __float128 *first, __float128 *second) {
     int i;
     char buffer[128];
-    __float128 max_error = 0.0Q;
+    __float128 max_error = 0.0Q, max_error_relative = 0.0Q;
 
     for (i = 0; i < count; ++i) {
         max_error = fmaxq(max_error, fabsq(first[i] - second[i]));
+        max_error_relative = fmaxq(max_error_relative, fabsq((first[i] - second[i]) / first[i]));
+
+        /*quadmath_snprintf(buffer, sizeof(buffer), "%#Qe", first[i]);
+        printf("first  = %s\n", buffer);
+
+        quadmath_snprintf(buffer, sizeof(buffer), "%#Qe", second[i]);
+        printf("second = %s\n", buffer);*/
     }
 
     quadmath_snprintf(buffer, sizeof(buffer), "%#Qe", max_error);
     printf("Max error = %s\n", buffer);
+
+    quadmath_snprintf(buffer, sizeof(buffer), "%#Qe", max_error_relative);
+    printf("Max error relative = %s\n", buffer);
 }
 
 operation_t operation_from_string(const char *str) {
@@ -210,16 +218,16 @@ void display_help() {
     printf(
         "Usage: quadruple COMMAND [parameters...]\n\n"
         "Supported commands:\n"
-        "add N REP_COUNT BACKED - performs addition of N elements with specified backend\n"
-        "sub N REP_COUNT BACKED - performs subtraction of N elements with specified backend\n"
-        "mul N REP_COUNT BACKED - performs multiplication of N elements with specified backend\n"
-        "div N REP_COUNT BACKED - performs division of N elements with specified backend\n"
+        "add N REP_COUNT BACKEND - performs addition of N elements with specified backend\n"
+        "sub N REP_COUNT BACKEND - performs subtraction of N elements with specified backend\n"
+        "mul N REP_COUNT BACKEND - performs multiplication of N elements with specified backend\n"
+        "div N REP_COUNT BACKEND - performs division of N elements with specified backend\n"
         "\n"
         "N is size of array\n"
         "\n"
         "REP_COUNT is number of repetitions of operations\n"
         "\n"
-        "BACKED is one of:\n"
+        "BACKEND is one of:\n"
         "gcc - uses default gcc implementation\n"
         "avx - uses avx implementation (assembly)\n"
         "avx_checked - uses avx backed and checks output with gcc backend\n\n"

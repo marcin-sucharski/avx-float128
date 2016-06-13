@@ -6,6 +6,9 @@ global quadruple_mul_avx
 global quadruple_div_avx
 
 global test_adddq
+global test_vpsrldqy
+global test_vpslldqy
+global test_efrac
 
 %define FRAC_BITS 112
 %define EXP_BITS 15
@@ -18,19 +21,65 @@ global test_adddq
 ;
 ; Result:
 ; %1 = [a+b; c+d]
-%macro vpadddq 6
-	vpcmpeqd	%6,	%6,	%6		; %4 = 0xFF..FF
-	vpsrldq		%6,	%6,	8		; %4 = [0, 0xFF..FF; 0, 0xFF..FF]
+%macro vpadddq 5
 	vpaddq		%1,	%2,	%3		; %1 = [a2+b2, a1+b1; c2+d2, c1+d1]
-	vpand		%4,	%1,	%6		; %4 = [0, a1+b1; 0, c1+d1]
+	vpand		%4,	%1,	[first_64_bits]	; %4 = [0, a1+b1; 0, c1+d1]
+	vpslldq		%4,	%4,	8		; %4 = [a1+b1, 0; c1+d1, 0]
 	vpslldq		%5,	%2,	8		; %5 = [a1, 0; c1, 0]
-	vpor		%4,	%4,	%5		; %4 = [a1, a1+b1; c1, c1+d1]
 	vpxor		%4,	%4,	[adddq_sgn_xor]
-	vpand		%5,	%4,	%6
-	vpsrldq		%4,	%4,	8
-	vpcmpgtq	%6,	%4,	%5		; %6 = [0, a1+b1 < a1; 0, c1+d1 < c1]
-	vpslldq		%6,	%6,	8		; %6 = [a1+b1 < a1, 0; c1+d1 < c1, 0]
-	vpsubq		%1,	%1,	%6		; %1 = result
+	vpxor		%5,	%5,	[adddq_sgn_xor]
+	vpcmpgtq	%4,	%5,	%4		; %4 = [a1+b1 < a1, 0; c1+d1 < c1, 0]
+	vpsubq		%1,	%1,	%4		; %1 = result
+%endmacro
+
+; Shifts right double qword by specified number of bits
+; %1 - output
+; %2 - value to be shifted
+; %3 - number of bits
+; %4, %5 - tmp
+%macro vpsrldqy 5
+	vmovdqa		%5,	[positive_64]
+	vpminud		%4,	%3,	[first_8_bits]
+	vpshufd		%4,	%4,	11001100b
+	vpsrlvq		%1,	%2,	%4
+	vpsubq		%4,	%5,	%4
+	vpsllvq		%4,	%2,	%4
+	vpand		%4,	%4,	[first_64_bits]
+	vpor		%1,	%1,	%4
+%endmacro
+
+; Shifts left double qword by specified number of bits
+; %1 - output
+; %2 - value to be shifted
+; %3 - number of bits
+; %4, %5 - tmp
+%macro vpslldqy 5
+	vmovdqa		%5,	[positive_64]
+	vpminud		%4,	%3,	[first_8_bits]
+	vpshufd		%4,	%4,	11001100b
+	vpsllvq		%1,	%2,	%4
+	vpsubq		%4,	%5,	%4
+	vpsrlvq		%4,	%2,	%4
+	vpand		%4,	%4,	[second_64_bits]
+	vpor		%1,	%1,	%4
+%endmacro
+
+; Extracts fraction from quadruple
+; %1 - output
+; %2 - quadruple tuple
+; %3, %4 - temp
+%macro efrac 4
+	vpand		%1,	%2,	[zero_expsgn]
+	vpxor		%4,	%4,	%4
+	vpand		%3,	%2,	[zero_sign]
+	vpcmpeqq	%3,	%3,	%4
+	vpshufd		%4,	%3,	01001110b
+	vpand		%3,	%3,	%4
+	vpshufd		%3,	%3,	0
+	vpcmpeqq	%4,	%4,	%4
+	vpxor		%3,	%3,	%4
+	vpand		%4,	%3,	[hidden_one]
+	vpor		%1,	%1,	%4
 %endmacro
 
 
@@ -45,10 +94,13 @@ global test_adddq
 
 quadruple_add_avx:
 ; divide count by 2 rounding up
-	add	rdi,	1
-	shr	rdi,	1
+	add	edi,	1
+	shr	edi,	1
 	align 32
 .loop:
+	vpxor		ymm15,	ymm15,	ymm15
+	vmovdqu		[rsp-64],	ymm15
+
 ; load data
 	vmovdqa		ymm0,	[rsi]
 	vmovdqa		ymm1,	[rdx]
@@ -71,49 +123,251 @@ quadruple_add_avx:
 	vmovdqa		ymm2,	ymm5			; save absolute exp diff to ymm2
 
 	; check output; ymm3 and ymm4 should be sorted according to exponent (exp3 > exp4)
-	; ymm2 holds exp4-exp3
+	; ymm2 holds exp3-exp4
 
 ; extract fractions
-; reads: ymm3, ymm4
+; reads: ymm3, ymm4, ymm2
 ; out: ymm5, ymm6
-	vpand		ymm5,	ymm3,	[zero_expsgn]	; remove exp and sign
-	vpand		ymm6,	ymm4,	[zero_expsgn]
-	vpor		ymm5,	ymm5,	[hidden_one]	; add hidden one
-	vpor		ymm6,	ymm6,	[hidden_one]
+	efrac		ymm5,	ymm3,	ymm7,	ymm8
+	efrac		ymm6,	ymm4,	ymm7,	ymm8
 
-	; get sign bit
-	vmovdqa		ymm15,	[zero_sign]
-	vpcmpeqd	ymm14,	ymm14,	ymm14
-	vpxor		ymm15,	ymm15,	ymm14		; ymm15 = sign bit
+; alignment
+	vpsrldqy	ymm7,	ymm6,	ymm2,	ymm14,	ymm15
+	vmovdqa		ymm6,	ymm7
 
-	; convert to 2C
+; convert to 2C
+	vmovdqa		ymm15,	[sign]
 	vpand		ymm7,	ymm3,	ymm15
 	vpand		ymm8,	ymm4,	ymm15
 	vpcmpeqq	ymm7,	ymm7,	ymm15
 	vpcmpeqq	ymm8,	ymm8,	ymm15
-	vpshufd		ymm7,	ymm7,	0xFF		; ymm7 = ones if negative
-	vpshufd		ymm8,	ymm8,	0xFF		; ymm8 = ones if negative
+	vpshufd		ymm7,	ymm7,	0xFF		; ymm7 = ones if ymm3 negative
+	vpshufd		ymm8,	ymm8,	0xFF		; ymm8 = ones if ymm4 negative
 
+; negate bits if negating
+	vpxor		ymm9,	ymm5,	ymm7
+	vpxor		ymm10,	ymm6,	ymm8
 
-; alignment
-	vpcmpeqw	ymm7,	ymm7,	ymm7
-	vpsrldq		ymm7,	ymm7,	15
-	vpsrlq		ymm7,	ymm7,	5		; ymm7 = [0x7; 0x7]
+; positive one if negating, otherwise zero
+	vpand		ymm7,	ymm7,	[first_bit]
+	vpand		ymm8,	ymm8,	[first_bit]
 
-	vpcmpeqd	ymm15,	ymm15,	ymm15
-	vpmuldq		ymm8,	ymm2,	ymm15		; negative count
+; add fractions
+; reads: ymm5, ymm6
+; out: ymm7
+	vpaddq		ymm7,	ymm7,	ymm8
+	vpadddq		ymm8,	ymm9,	ymm10,	ymm11,	ymm12
+	vpadddq		ymm7,	ymm8,	ymm7,	ymm11,	ymm12
 
+; convert to sign-module
+; reads: ymm7
+; out: ymm7 (value),
+	vpand		ymm8,	ymm7,	ymm15		; ymm8 - sign bit
+	vpcmpeqd	ymm9,	ymm8,	ymm15
+	vpshufd		ymm9,	ymm9,	0xFF		; ymm9 = ones if ymm7 negative
+
+	vpxor		ymm7,	ymm7,	ymm9
+	vpand		ymm9,	ymm9,	[first_bit]
+	vpadddq		ymm10,	ymm7,	ymm9,	ymm11,	ymm12
+	vmovdqa		ymm7,	ymm10
+
+; normalization
+; reads: ymm7
+; out: ymm7, ymm0
+	vmovdqu		[rsp-32],	ymm10
+
+	lzcnt		r9,		[rsp-8]
+	lzcnt		r8,		[rsp-16]
+	add		r8,		64
+	test		r9,		r9
+	cmove		r9,		r8
+	mov		[rsp-48],	r9
+
+	lzcnt		r11,		[rsp-24]
+	lzcnt		r10,		[rsp-32]
+	add		r10,		64
+	test		r11,		r11
+	cmove		r11,		r10
+	mov		[rsp-64],	r11
+
+	vmovdqa		ymm1,	[value_15]
+	vmovdqu		ymm0,	[rsp-64]
+	vpsubd		ymm0,	ymm0,	ymm1
+
+	vpxor		ymm1,	ymm1,	ymm1
+	vpcmpeqd	ymm11,	ymm11,	ymm11
+	vpmuldq		ymm11,	ymm0,	ymm11
+	vpmaxsd		ymm4,	ymm1,	ymm0
+	vpmaxsd		ymm5,	ymm1,	ymm11
+
+	vpslldqy	ymm6,	ymm7,	ymm5,	ymm10,	ymm11
+	vpsrldqy	ymm7,	ymm6,	ymm4,	ymm10,	ymm11
+	vpand		ymm7,	ymm7,	[zero_expsgn]
+	vpshufd		ymm0,	ymm0,	00111111b
+	vpshufhw	ymm0,	ymm0,	10000000b
+
+; add sign bit
+; reads: ymm7
+; out: ymm7
+	vpor		ymm7,	ymm7,	ymm8
+
+; set exponent
+; reads: ymm7, ymm3, ymm0
+; out: ymm7
+	vpand		ymm8,	ymm3,	[exp]
+	vpaddd		ymm8,	ymm8,	ymm0
+	vpor		ymm7,	ymm7,	ymm8
+
+; save result
+	vmovdqa		[rcx],	ymm7
 
 ; loop epilog
 	add	rsi,	32
 	add	rdx,	32
 	add	rcx,	32
-	sub	rdi,	1
+	sub	edi,	1
 	jnz	.loop
 	rep ret
 
 
 quadruple_sub_avx:
+; divide count by 2 rounding up
+	add	edi,	1
+	shr	edi,	1
+	align 32
+.loop:
+	vpxor		ymm15,	ymm15,	ymm15
+	vmovdqu		[rsp-64],	ymm15
+
+; load data
+	vmovdqa		ymm0,	[rsi]
+	vmovdqa		ymm1,	[rdx]
+
+; negate second
+	vpxor		ymm1,	ymm1,	[sign]
+
+; exponent diff
+; reads: ymm0, ymm1
+; out: ymm2, ymm3, ymm4
+	vpand		ymm2,	ymm0,	[zero_sign]	; remove sign
+	vpand		ymm3,	ymm1,	[zero_sign]
+	vpsrldq		ymm2,	ymm2,	FRAC_BITS/8	; move exp to left (remove frac)
+	vpsrldq		ymm3,	ymm3,	FRAC_BITS/8
+	vpsubsw		ymm5,	ymm2,	ymm3		; subtract exponents
+	vpabsw		ymm5,	ymm5			; absolute value of exp diff
+	vpmaxud		ymm2,	ymm2,	ymm3
+	vpcmpeqd	ymm2,	ymm2,	ymm3		; compare fractions
+	vpblendvb	ymm3,	ymm0,	ymm1,	ymm2	; sort
+	vpcmpeqd	ymm15,	ymm15,	ymm15		; 0xFF...FF in ymm15
+	vpxor		ymm2,	ymm2,	ymm15		; negate ymm2
+	vpblendvb	ymm4,	ymm0,	ymm1,	ymm2
+	vmovdqa		ymm2,	ymm5			; save absolute exp diff to ymm2
+
+	; check output; ymm3 and ymm4 should be sorted according to exponent (exp3 > exp4)
+	; ymm2 holds exp3-exp4
+
+; extract fractions
+; reads: ymm3, ymm4, ymm2
+; out: ymm5, ymm6
+	efrac		ymm5,	ymm3,	ymm7,	ymm8
+	efrac		ymm6,	ymm4,	ymm7,	ymm8
+
+; alignment
+	vpsrldqy	ymm7,	ymm6,	ymm2,	ymm14,	ymm15
+	vmovdqa		ymm6,	ymm7
+
+; convert to 2C
+	vmovdqa		ymm15,	[sign]
+	vpand		ymm7,	ymm3,	ymm15
+	vpand		ymm8,	ymm4,	ymm15
+	vpcmpeqq	ymm7,	ymm7,	ymm15
+	vpcmpeqq	ymm8,	ymm8,	ymm15
+	vpshufd		ymm7,	ymm7,	0xFF		; ymm7 = ones if ymm3 negative
+	vpshufd		ymm8,	ymm8,	0xFF		; ymm8 = ones if ymm4 negative
+
+; negate bits if negating
+	vpxor		ymm9,	ymm5,	ymm7
+	vpxor		ymm10,	ymm6,	ymm8
+
+; positive one if negating, otherwise zero
+	vpand		ymm7,	ymm7,	[first_bit]
+	vpand		ymm8,	ymm8,	[first_bit]
+
+; add fractions
+; reads: ymm5, ymm6
+; out: ymm7
+	vpaddq		ymm7,	ymm7,	ymm8
+	vpadddq		ymm8,	ymm9,	ymm10,	ymm11,	ymm12
+	vpadddq		ymm7,	ymm8,	ymm7,	ymm11,	ymm12
+
+; convert to sign-module
+; reads: ymm7
+; out: ymm7 (value),
+	vpand		ymm8,	ymm7,	ymm15		; ymm8 - sign bit
+	vpcmpeqd	ymm9,	ymm8,	ymm15
+	vpshufd		ymm9,	ymm9,	0xFF		; ymm9 = ones if ymm7 negative
+
+	vpxor		ymm7,	ymm7,	ymm9
+	vpand		ymm9,	ymm9,	[first_bit]
+	vpadddq		ymm10,	ymm7,	ymm9,	ymm11,	ymm12
+	vmovdqa		ymm7,	ymm10
+
+; normalization
+; reads: ymm7
+; out: ymm7, ymm0
+	vmovdqu		[rsp-32],	ymm10
+
+	lzcnt		r9,		[rsp-8]
+	lzcnt		r8,		[rsp-16]
+	add		r8,		64
+	test		r9,		r9
+	cmove		r9,		r8
+	mov		[rsp-48],	r9
+
+	lzcnt		r11,		[rsp-24]
+	lzcnt		r10,		[rsp-32]
+	add		r10,		64
+	test		r11,		r11
+	cmove		r11,		r10
+	mov		[rsp-64],	r11
+
+	vmovdqa		ymm1,	[value_15]
+	vmovdqu		ymm0,	[rsp-64]
+	vpsubd		ymm0,	ymm0,	ymm1
+
+	vpxor		ymm1,	ymm1,	ymm1
+	vpcmpeqd	ymm11,	ymm11,	ymm11
+	vpmuldq		ymm11,	ymm0,	ymm11
+	vpmaxsd		ymm4,	ymm1,	ymm0
+	vpmaxsd		ymm5,	ymm1,	ymm11
+
+	vpslldqy	ymm6,	ymm7,	ymm5,	ymm10,	ymm11
+	vpsrldqy	ymm7,	ymm6,	ymm4,	ymm10,	ymm11
+	vpand		ymm7,	ymm7,	[zero_expsgn]
+	vpshufd		ymm0,	ymm0,	00111111b
+	vpshufhw	ymm0,	ymm0,	10000000b
+
+; add sign bit
+; reads: ymm7
+; out: ymm7
+	vpor		ymm7,	ymm7,	ymm8
+
+; set exponent
+; reads: ymm7, ymm3, ymm0
+; out: ymm7
+	vpand		ymm8,	ymm3,	[exp]
+	vpaddd		ymm8,	ymm8,	ymm0
+	vpor		ymm7,	ymm7,	ymm8
+
+; save result
+	vmovdqa		[rcx],	ymm7
+
+; loop epilog
+	add	rsi,	32
+	add	rdx,	32
+	add	rcx,	32
+	sub	edi,	1
+	jnz	.loop
 	rep ret
 
 
@@ -132,13 +386,56 @@ quadruple_div_avx:
 ;
 ; Result in ymm0
 test_adddq:
-	vpadddq		ymm3,	ymm0,	ymm1,	ymm4,	ymm5,	ymm6
+	vpadddq		ymm3,	ymm0,	ymm1,	ymm4,	ymm5
 	vmovdqa		ymm0,	ymm3
+	rep ret
+
+; Function for testing right bit shift of 128 bit integers.
+;
+; Arguments:
+; ymm0 - pair of integers to be shifted
+; ymm1 - number of bits to shift
+;
+; Result in ymm0
+test_vpsrldqy:
+	vpsrldqy	ymm2,	ymm0,	ymm1,	ymm3,	ymm5
+	vmovdqa		ymm0,	ymm2
+	rep ret
+
+; Function for testing left bit shift of 128 bit integers.
+;
+; Arguments:
+; ymm0 - pair of integers to be shifted
+; ymm1 - number of bits to shift
+;
+; Result in ymm0
+test_vpslldqy:
+	vpslldqy	ymm2,	ymm0,	ymm1,	ymm3,	ymm5
+	vmovdqa		ymm0,	ymm2
+	rep ret
+
+; Function for testing extract fraction macro.
+;
+; Arguments:
+; ymm0 - quadruple from which fraction should be extracted
+;
+; Result in ymm0
+test_efrac:
+	efrac		ymm1,	ymm0,	ymm2, ymm3
+	vmovdqa		ymm0,	ymm1
 	rep ret
 
 section .data
 align 32
 	zero_sign: 	dq	0xFFFFFFFFFFFFFFFF, 0x7FFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x7FFFFFFFFFFFFFFF
+	sign:		dq	0x0000000000000000, 0x8000000000000000, 0x0000000000000000, 0x8000000000000000
 	zero_expsgn: 	dq	0xFFFFFFFFFFFFFFFF, 0x0000FFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x0000FFFFFFFFFFFF
+	exp:		dq	0x0000000000000000, 0x7FFF000000000000, 0x0000000000000000, 0x7FFF000000000000
 	hidden_one: 	dq	0x0000000000000000, 0x0001000000000000, 0x0000000000000000, 0x0001000000000000
 	adddq_sgn_xor:	dq	0x8000000000000000, 0x8000000000000000, 0x8000000000000000, 0x8000000000000000
+	first_64_bits:	dq	0xFFFFFFFFFFFFFFFF, 0x0000000000000000, 0xFFFFFFFFFFFFFFFF, 0x0000000000000000
+	second_64_bits:	dq	0x0000000000000000, 0xFFFFFFFFFFFFFFFF, 0x0000000000000000, 0xFFFFFFFFFFFFFFFF
+	first_bit:	dq	0x0000000000000001, 0x0000000000000000, 0x0000000000000001, 0x0000000000000000
+	first_8_bits:	dq	0x00000000000000FF, 0x0000000000000000, 0x00000000000000FF, 0x0000000000000000
+	positive_64:	dq	0x0000000000000040, 0x0000000000000040, 0x0000000000000040, 0x0000000000000040
+	value_15:	dq	0x000000000000000F, 0x0000000000000000, 0x000000000000000F, 0x0000000000000000

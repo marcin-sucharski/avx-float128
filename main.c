@@ -95,7 +95,7 @@ int main(int argc, char *argv[]) {
     __float128 *out = alloc_f128_array(count);
     __float128 *tmp = alloc_f128_array(count);
 
-    generate_data(count, -0.5Q, a);
+    generate_data(count, 0.0000001Q, a);
     generate_data(count, 2.0Q, b);
 
     clock_t calculate_begin = clock();
@@ -185,12 +185,6 @@ void display_max_error(int count, __float128 *first, __float128 *second) {
     for (i = 0; i < count; ++i) {
         max_error = fmaxq(max_error, fabsq(first[i] - second[i]));
         max_error_relative = fmaxq(max_error_relative, fabsq((first[i] - second[i]) / first[i]));
-
-        /*quadmath_snprintf(buffer, sizeof(buffer), "%#Qe", first[i]);
-        printf("first  = %s\n", buffer);
-
-        quadmath_snprintf(buffer, sizeof(buffer), "%#Qe", second[i]);
-        printf("second = %s\n", buffer);*/
     }
 
     quadmath_snprintf(buffer, sizeof(buffer), "%#Qe", max_error);

@@ -95,7 +95,7 @@ int main(int argc, char *argv[]) {
     __float128 *out = alloc_f128_array(count);
     __float128 *tmp = alloc_f128_array(count);
 
-    generate_data(count, 1.0Q, a);
+    generate_data(count, -0.5Q, a);
     generate_data(count, 2.0Q, b);
 
     clock_t calculate_begin = clock();

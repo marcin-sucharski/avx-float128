@@ -9,14 +9,16 @@ all: quadruple \
 	tests/vpadddq \
 	tests/vpsrldqy \
 	tests/vpslldqy \
-	tests/efrac
+	tests/efrac \
+	tests/normalize
 
-test: tests/vpadddq tests/vpsrldqy tests/vpslldqy tests/efrac
+test: tests/vpadddq tests/vpsrldqy tests/vpslldqy tests/efrac tests/normalize
 	@echo "TESTS"
 	./tests/vpadddq
 	./tests/vpsrldqy
 	./tests/vpslldqy
 	./tests/efrac
+	./tests/normalize
 
 main.o: main.c
 	$(CC) $(CFLAGS) -c main.c
@@ -51,6 +53,12 @@ tests/efrac.o: tests/efrac.c
 tests/efrac: tests/efrac.o quadruple.o
 	$(CC) $(CFLAGS) tests/efrac.o quadruple.o ${LFLAGS} -o tests/efrac
 
+tests/normalize.o: tests/normalize.c
+	$(CC) $(CFLAGS) -c tests/normalize.c -o tests/normalize.o
+
+tests/normalize: tests/normalize.o quadruple.o
+	$(CC) $(CFLAGS) tests/normalize.o quadruple.o ${LFLAGS} -o tests/normalize
+
 clean:
 	rm -f *.o
 	rm -f tests/*.o
@@ -59,3 +67,4 @@ clean:
 	rm -f tests/vpsrldqy
 	rm -f tests/vpslldqy
 	rm -f tests/efrac
+	rm -f tests/normalize

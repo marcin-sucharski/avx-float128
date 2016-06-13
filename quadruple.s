@@ -9,6 +9,7 @@ global test_adddq
 global test_vpsrldqy
 global test_vpslldqy
 global test_efrac
+global test_normalize
 
 %define FRAC_BITS 112
 %define EXP_BITS 15
@@ -44,6 +45,7 @@ global test_efrac
 	vpsrlvq		%1,	%2,	%4
 	vpsubq		%4,	%5,	%4
 	vpsllvq		%4,	%2,	%4
+	vpshufd		%4,	%4,	01001110b
 	vpand		%4,	%4,	[first_64_bits]
 	vpor		%1,	%1,	%4
 %endmacro
@@ -60,6 +62,7 @@ global test_efrac
 	vpsllvq		%1,	%2,	%4
 	vpsubq		%4,	%5,	%4
 	vpsrlvq		%4,	%2,	%4
+	vpshufd		%4,	%4,	01001110b
 	vpand		%4,	%4,	[second_64_bits]
 	vpor		%1,	%1,	%4
 %endmacro
@@ -80,6 +83,56 @@ global test_efrac
 	vpxor		%3,	%3,	%4
 	vpand		%4,	%3,	[hidden_one]
 	vpor		%1,	%1,	%4
+%endmacro
+
+; Normalizes fraction
+; %1 - in/out fraction
+; %2 - out exp change
+; %3-8 - temporary ymm
+%macro normalize 8
+	vmovdqu		[rsp-32],	%1
+
+	lzcnt		r9,		[rsp-8]
+	lzcnt		r8,		[rsp-16]
+	add		r8,		64
+	cmp		r9,		64
+	cmove		r9,		r8
+	mov		[rsp-48],	r9
+	mov		qword [rsp-40],	0
+
+	lzcnt		r11,		[rsp-24]
+	lzcnt		r10,		[rsp-32]
+	add		r10,		64
+	cmp		r11,		64
+	cmove		r11,		r10
+	mov		[rsp-64],	r11
+	mov		qword [rsp-56],	0
+
+	;int3
+	vpxor		%3,	%3,	%3
+	vpcmpeqd	%4,	%4,	%4
+
+	vmovdqu		%2,	[rsp-64]
+	vpcmpeqq	%5,	%1,	%3
+	vpshufd		%6,	%5,	01001110b
+	vpand		%5,	%5,	%6
+	vpxor		%5,	%5,	%4
+	vpsubd		%2,	%2,	[value_15]
+	vpand		%2,	%2,	%5
+
+	;int3
+	vpmuldq		%4,	%2,	%4
+	vpmaxsd		%5,	%3,	%2
+	vpmaxsd		%6,	%3,	%4
+	vmovdqa		%2,	%4
+
+	vpslldqy	%7,	%1,	%5,	%8,	%4
+	;int3
+	vpsrldqy	%1,	%7,	%6,	%8,	%4
+	;int3
+	vpand		%1,	%1,	[zero_expsgn]
+	vpshufd		%2,	%2,	00111111b
+	vpshufhw	%2,	%2,	10000000b
 %endmacro
 
 
@@ -161,7 +214,7 @@ quadruple_add_avx:
 
 ; convert to sign-module
 ; reads: ymm7
-; out: ymm7 (value),
+; out: ymm7 (value), ymm8
 	vpand		ymm8,	ymm7,	ymm15		; ymm8 - sign bit
 	vpcmpeqd	ymm9,	ymm8,	ymm15
 	vpshufd		ymm9,	ymm9,	0xFF		; ymm9 = ones if ymm7 negative
@@ -172,42 +225,10 @@ quadruple_add_avx:
 	vmovdqa		ymm7,	ymm10
 
 ; normalization
-; reads: ymm7
-; out: ymm7, ymm0
-	vmovdqu		[rsp-32],	ymm10
-
-	lzcnt		r9,		[rsp-8]
-	lzcnt		r8,		[rsp-16]
-	add		r8,		64
-	test		r9,		r9
-	cmove		r9,		r8
-	mov		[rsp-48],	r9
-
-	lzcnt		r11,		[rsp-24]
-	lzcnt		r10,		[rsp-32]
-	add		r10,		64
-	test		r11,		r11
-	cmove		r11,		r10
-	mov		[rsp-64],	r11
-
-	vmovdqa		ymm1,	[value_15]
-	vmovdqu		ymm0,	[rsp-64]
-	vpsubd		ymm0,	ymm0,	ymm1
-
-	vpxor		ymm1,	ymm1,	ymm1
-	vpcmpeqd	ymm11,	ymm11,	ymm11
-	vpmuldq		ymm11,	ymm0,	ymm11
-	vpmaxsd		ymm4,	ymm1,	ymm0
-	vpmaxsd		ymm5,	ymm1,	ymm11
-
-	vpslldqy	ymm6,	ymm7,	ymm5,	ymm10,	ymm11
-	vpsrldqy	ymm7,	ymm6,	ymm4,	ymm10,	ymm11
-	vpand		ymm7,	ymm7,	[zero_expsgn]
-	vpshufd		ymm0,	ymm0,	00111111b
-	vpshufhw	ymm0,	ymm0,	10000000b
+	normalize	ymm7,	ymm0,	ymm1,	ymm6,	ymm5,	ymm4,	ymm10,	ymm11
 
 ; add sign bit
-; reads: ymm7
+; reads: ymm7, ymm8
 ; out: ymm7
 	vpor		ymm7,	ymm7,	ymm8
 
@@ -313,39 +334,7 @@ quadruple_sub_avx:
 	vmovdqa		ymm7,	ymm10
 
 ; normalization
-; reads: ymm7
-; out: ymm7, ymm0
-	vmovdqu		[rsp-32],	ymm10
-
-	lzcnt		r9,		[rsp-8]
-	lzcnt		r8,		[rsp-16]
-	add		r8,		64
-	test		r9,		r9
-	cmove		r9,		r8
-	mov		[rsp-48],	r9
-
-	lzcnt		r11,		[rsp-24]
-	lzcnt		r10,		[rsp-32]
-	add		r10,		64
-	test		r11,		r11
-	cmove		r11,		r10
-	mov		[rsp-64],	r11
-
-	vmovdqa		ymm1,	[value_15]
-	vmovdqu		ymm0,	[rsp-64]
-	vpsubd		ymm0,	ymm0,	ymm1
-
-	vpxor		ymm1,	ymm1,	ymm1
-	vpcmpeqd	ymm11,	ymm11,	ymm11
-	vpmuldq		ymm11,	ymm0,	ymm11
-	vpmaxsd		ymm4,	ymm1,	ymm0
-	vpmaxsd		ymm5,	ymm1,	ymm11
-
-	vpslldqy	ymm6,	ymm7,	ymm5,	ymm10,	ymm11
-	vpsrldqy	ymm7,	ymm6,	ymm4,	ymm10,	ymm11
-	vpand		ymm7,	ymm7,	[zero_expsgn]
-	vpshufd		ymm0,	ymm0,	00111111b
-	vpshufhw	ymm0,	ymm0,	10000000b
+	normalize	ymm7,	ymm0,	ymm1,	ymm6,	ymm5,	ymm4,	ymm10,	ymm11
 
 ; add sign bit
 ; reads: ymm7
@@ -423,6 +412,20 @@ test_vpslldqy:
 test_efrac:
 	efrac		ymm1,	ymm0,	ymm2, ymm3
 	vmovdqa		ymm0,	ymm1
+	rep ret
+
+; Function for testing fractin normalization.
+;
+; Arguments:
+; ymm0 - fraction to be normalized
+; rdi - pointer to exp change result
+;
+; Results:
+; ymm0 - normalized fraction
+; [rdi] - exp change
+test_normalize:
+	normalize	ymm0,	ymm1,	ymm2,	ymm3,	ymm4,	ymm5,	ymm6,	ymm7
+	vmovdqu		[rdi],	ymm1
 	rep ret
 
 section .data

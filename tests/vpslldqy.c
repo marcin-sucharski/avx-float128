@@ -25,7 +25,8 @@ int check_result(__int128_t result, __int128_t expected, int i, int j) {
     return 1;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    int i = 0;
     int128_data_t values[] = {
         {{0x0, 0x0}},
         {{0x0, 0x0}},
@@ -51,8 +52,12 @@ int main() {
         {{0x0, 0x0}}
     };
 
+    if (argc == 2) {
+        i = atoi(argv[1]);
+    }
+
     int count = sizeof(values) / sizeof(values[0]);
-    for (int i = 0; i < count; ++i) {
+    for (; i < count; ++i) {
         for (int j = i; j < count; ++j) {
             __int128_t a = values[i].value;
             __int128_t b = values[j].value;

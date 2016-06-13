@@ -22,6 +22,20 @@ test: tests/vpadddq tests/vpsrldqy tests/vpslldqy tests/efrac tests/normalize te
 	./tests/normalize
 	./tests/add
 
+check: quadruple
+	@echo "CHECK"
+	./quadruple add 1000000 1 avx_checked | grep "relative"
+	./quadruple sub 1000000 1 avx_checked | grep "relative"
+
+perftest: quadruple
+	@echo "PERFTEST"
+	@echo "ADD"
+	./quadruple add 256 2000000 avx | grep "Calculation"
+	./quadruple add 256 2000000 gcc | grep "Calculation"
+	@echo "SUB"
+	./quadruple sub 256 2000000 avx | grep "Calculation"
+	./quadruple sub 256 2000000 gcc | grep "Calculation"
+
 main.o: main.c
 	$(CC) $(CFLAGS) -c main.c
 

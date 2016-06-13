@@ -85,6 +85,59 @@ global test_normalize
 	vpor		%1,	%1,	%4
 %endmacro
 
+; Calculates exponent difference and sorts values by exponent
+; %1 - [out] expdiff
+; %2 - [out] values with greater exponents
+; %3 - [out] values with lower exponents
+; %4 - first values
+; %5 - second values
+; %6,%7 - temp
+%macro expdiff 7
+	vpand		%1,	%4,	[zero_sign]	; remove sign
+	vpand		%2,	%5,	[zero_sign]
+	vpsrldq		%1,	%1,	FRAC_BITS/8	; move exp to left (remove frac)
+	vpsrldq		%2,	%2,	FRAC_BITS/8
+	vpsubsw		%6,	%1,	%2		; subtract exponents
+	vpabsw		%6,	%6			; absolute value of exp diff
+	vpmaxud		%1,	%1,	%2
+	vpcmpeqd	%1,	%1,	%2		; compare fractions
+	vpshufd		%1,	%1,	0
+	vpblendvb	%2,	%4,	%5,	%1	; sort
+	vpcmpeqd	%7,	%7,	%7		; 0xFF...FF in %7
+	vpxor		%1,	%1,	%7		; negate %1
+	vpblendvb	%3,	%4,	%5,	%1
+	vmovdqa		%1,	%6			; save absolute exp diff to %1
+	; %2 and %3 should be sorted according to exponent (exp3 > exp4)
+	; %1 holds exp3-exp4
+%endmacro
+
+; Convert values to 2C, but does not add one's (returns them in registers)
+; %1 - [out] first pair of values
+; %2 - [out] second pair of values
+; %3 - [out] +1 for first values
+; %4 - [out] +1 for second values
+; %5 - first pair of fractions
+; %6 - second pair of fractions
+; %7 - original values with sign for first values
+; %8 - original values with sign for second values
+; %9 - sign bit constant
+%macro to2c 9
+	vpand		%3,	%7,	%9
+	vpand		%4,	%8,	%9
+	vpcmpeqq	%3,	%3,	%9
+	vpcmpeqq	%4,	%4,	%9
+	vpshufd		%3,	%3,	0xFF		; %3 = ones if %7 negative
+	vpshufd		%4,	%4,	0xFF		; %4 = ones if %8 negative
+
+; negate bits if negating
+	vpxor		%1,	%5,	%3
+	vpxor		%2,	%6,	%4
+
+; positive one if negating, otherwise zero
+	vpand		%3,	%3,	[first_bit]
+	vpand		%4,	%4,	[first_bit]
+%endmacro
+
 ; Normalizes fraction
 ; %1 - in/out fraction
 ; %2 - out exp change
@@ -98,7 +151,6 @@ global test_normalize
 	cmp		r9,		64
 	cmove		r9,		r8
 	mov		[rsp-48],	r9
-	mov		qword [rsp-40],	0
 
 	lzcnt		r11,		[rsp-24]
 	lzcnt		r10,		[rsp-32]
@@ -106,7 +158,6 @@ global test_normalize
 	cmp		r11,		64
 	cmove		r11,		r10
 	mov		[rsp-64],	r11
-	mov		qword [rsp-56],	0
 
 	vpxor		%3,	%3,	%3
 	vpcmpeqd	%4,	%4,	%4
@@ -156,23 +207,8 @@ quadruple_add_avx:
 
 ; exponent diff
 ; reads: ymm0, ymm1
-; out: ymm2, ymm3, ymm4
-	vpand		ymm2,	ymm0,	[zero_sign]	; remove sign
-	vpand		ymm3,	ymm1,	[zero_sign]
-	vpsrldq		ymm2,	ymm2,	FRAC_BITS/8	; move exp to left (remove frac)
-	vpsrldq		ymm3,	ymm3,	FRAC_BITS/8
-	vpsubsw		ymm5,	ymm2,	ymm3		; subtract exponents
-	vpabsw		ymm5,	ymm5			; absolute value of exp diff
-	vpmaxud		ymm2,	ymm2,	ymm3
-	vpcmpeqd	ymm2,	ymm2,	ymm3		; compare fractions
-	vpshufd		ymm2,	ymm2,	0
-	vpblendvb	ymm3,	ymm0,	ymm1,	ymm2	; sort
-	vpcmpeqd	ymm15,	ymm15,	ymm15		; 0xFF...FF in ymm15
-	vpxor		ymm2,	ymm2,	ymm15		; negate ymm2
-	vpblendvb	ymm4,	ymm0,	ymm1,	ymm2
-	vmovdqa		ymm2,	ymm5			; save absolute exp diff to ymm2
-	; check output; ymm3 and ymm4 should be sorted according to exponent (exp3 > exp4)
-	; ymm2 holds exp3-exp4
+; out: ymm2 (expdiff), ymm3 (first values), ymm4 (second values)
+	expdiff		ymm2,	ymm3,	ymm4,	ymm0,	ymm1,	ymm5,	ymm6
 
 ; extract fractions
 ; reads: ymm3, ymm4, ymm2
@@ -186,20 +222,7 @@ quadruple_add_avx:
 
 ; convert to 2C
 	vmovdqa		ymm15,	[sign]
-	vpand		ymm7,	ymm3,	ymm15
-	vpand		ymm8,	ymm4,	ymm15
-	vpcmpeqq	ymm7,	ymm7,	ymm15
-	vpcmpeqq	ymm8,	ymm8,	ymm15
-	vpshufd		ymm7,	ymm7,	0xFF		; ymm7 = ones if ymm3 negative
-	vpshufd		ymm8,	ymm8,	0xFF		; ymm8 = ones if ymm4 negative
-
-; negate bits if negating
-	vpxor		ymm9,	ymm5,	ymm7
-	vpxor		ymm10,	ymm6,	ymm8
-
-; positive one if negating, otherwise zero
-	vpand		ymm7,	ymm7,	[first_bit]
-	vpand		ymm8,	ymm8,	[first_bit]
+	to2c		ymm9,	ymm10,	ymm7,	ymm8,	ymm5,	ymm6,	ymm3,	ymm4,	ymm15
 
 ; add fractions
 ; reads: ymm5, ymm6
@@ -210,7 +233,7 @@ quadruple_add_avx:
 
 ; convert to sign-module
 ; reads: ymm7
-; out: ymm7 (value), ymm8
+; out: ymm7 (value), ymm8 (sign bit)
 	vpand		ymm8,	ymm7,	ymm15		; ymm8 - sign bit
 	vpcmpeqd	ymm9,	ymm8,	ymm15
 	vpshufd		ymm9,	ymm9,	0xFF		; ymm9 = ones if ymm7 negative
@@ -265,24 +288,8 @@ quadruple_sub_avx:
 
 ; exponent diff
 ; reads: ymm0, ymm1
-; out: ymm2, ymm3, ymm4
-	vpand		ymm2,	ymm0,	[zero_sign]	; remove sign
-	vpand		ymm3,	ymm1,	[zero_sign]
-	vpsrldq		ymm2,	ymm2,	FRAC_BITS/8	; move exp to left (remove frac)
-	vpsrldq		ymm3,	ymm3,	FRAC_BITS/8
-	vpsubsw		ymm5,	ymm2,	ymm3		; subtract exponents
-	vpabsw		ymm5,	ymm5			; absolute value of exp diff
-	vpmaxud		ymm2,	ymm2,	ymm3
-	vpcmpeqd	ymm2,	ymm2,	ymm3		; compare fractions
-	vpshufd		ymm2,	ymm2,	0
-	vpblendvb	ymm3,	ymm0,	ymm1,	ymm2	; sort
-	vpcmpeqd	ymm15,	ymm15,	ymm15		; 0xFF...FF in ymm15
-	vpxor		ymm2,	ymm2,	ymm15		; negate ymm2
-	vpblendvb	ymm4,	ymm0,	ymm1,	ymm2
-	vmovdqa		ymm2,	ymm5			; save absolute exp diff to ymm2
-
-	; check output; ymm3 and ymm4 should be sorted according to exponent (exp3 > exp4)
-	; ymm2 holds exp3-exp4
+; out: ymm2 (expdiff), ymm3 (first values), ymm4 (second values)
+	expdiff		ymm2,	ymm3,	ymm4,	ymm0,	ymm1,	ymm5,	ymm6
 
 ; extract fractions
 ; reads: ymm3, ymm4, ymm2
@@ -296,20 +303,7 @@ quadruple_sub_avx:
 
 ; convert to 2C
 	vmovdqa		ymm15,	[sign]
-	vpand		ymm7,	ymm3,	ymm15
-	vpand		ymm8,	ymm4,	ymm15
-	vpcmpeqq	ymm7,	ymm7,	ymm15
-	vpcmpeqq	ymm8,	ymm8,	ymm15
-	vpshufd		ymm7,	ymm7,	0xFF		; ymm7 = ones if ymm3 negative
-	vpshufd		ymm8,	ymm8,	0xFF		; ymm8 = ones if ymm4 negative
-
-; negate bits if negating
-	vpxor		ymm9,	ymm5,	ymm7
-	vpxor		ymm10,	ymm6,	ymm8
-
-; positive one if negating, otherwise zero
-	vpand		ymm7,	ymm7,	[first_bit]
-	vpand		ymm8,	ymm8,	[first_bit]
+	to2c		ymm9,	ymm10,	ymm7,	ymm8,	ymm5,	ymm6,	ymm3,	ymm4,	ymm15
 
 ; add fractions
 ; reads: ymm5, ymm6
@@ -319,7 +313,7 @@ quadruple_sub_avx:
 	vpadddq		ymm7,	ymm8,	ymm7,	ymm11,	ymm12
 
 ; convert to sign-module
-; reads: ymm7
+; reads: ymm7, ymm15
 ; out: ymm7 (value),
 	vpand		ymm8,	ymm7,	ymm15		; ymm8 - sign bit
 	vpcmpeqd	ymm9,	ymm8,	ymm15
@@ -421,6 +415,8 @@ test_efrac:
 ; ymm0 - normalized fraction
 ; [rdi] - exp change
 test_normalize:
+	vpxor		ymm15,	ymm15,	ymm15
+	vmovdqu		[rsp-64],	ymm15
 	normalize	ymm0,	ymm1,	ymm2,	ymm3,	ymm4,	ymm5,	ymm6,	ymm7
 	vmovdqu		[rdi],	ymm1
 	rep ret

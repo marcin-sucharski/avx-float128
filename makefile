@@ -11,9 +11,10 @@ all: quadruple \
 	tests/vpslldqy \
 	tests/efrac \
 	tests/normalize \
-	tests/add
+	tests/add	\
+	tests/mul
 
-test: tests/vpadddq tests/vpsrldqy tests/vpslldqy tests/efrac tests/normalize tests/add
+test: tests/vpadddq tests/vpsrldqy tests/vpslldqy tests/efrac tests/normalize tests/add tests/mul
 	@echo "TESTS"
 	./tests/vpadddq
 	./tests/vpsrldqy
@@ -21,11 +22,13 @@ test: tests/vpadddq tests/vpsrldqy tests/vpslldqy tests/efrac tests/normalize te
 	./tests/efrac
 	./tests/normalize
 	./tests/add
+	./tests/mul
 
 check: quadruple
 	@echo "CHECK"
 	./quadruple add 1000000 1 avx_checked | grep "relative"
 	./quadruple sub 1000000 1 avx_checked | grep "relative"
+	./quadruple mul 1000000 1 avx_checked | grep "relative"
 
 perftest: quadruple
 	@echo "PERFTEST"
@@ -35,6 +38,9 @@ perftest: quadruple
 	@echo "SUB"
 	./quadruple sub 256 2000000 avx | grep "Calculation"
 	./quadruple sub 256 2000000 gcc | grep "Calculation"
+	@echo "MUL"
+	./quadruple mul 256 2000000 avx | grep "Calculation"
+	./quadruple mul 256 2000000 gcc | grep "Calculation"
 
 main.o: main.c
 	$(CC) $(CFLAGS) -c main.c
@@ -81,6 +87,12 @@ tests/add.o: tests/add.c
 tests/add: tests/add.o quadruple.o
 	$(CC) $(CFLAGS) tests/add.o quadruple.o ${LFLAGS} -o tests/add
 
+tests/mul.o: tests/mul.c
+	$(CC) $(CFLAGS) -c tests/mul.c -o tests/mul.o
+
+tests/mul: tests/mul.o quadruple.o
+	$(CC) $(CFLAGS) tests/mul.o quadruple.o ${LFLAGS} -o tests/mul
+
 clean:
 	rm -f *.o
 	rm -f tests/*.o
@@ -91,3 +103,4 @@ clean:
 	rm -f tests/efrac
 	rm -f tests/normalize
 	rm -f tests/add
+	rm -f tests/mul

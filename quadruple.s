@@ -182,7 +182,6 @@ global test_normalize
 	vpshufhw	%2,	%2,	10000000b
 %endmacro
 
-
 ; Arguments:
 ; rdi - count
 ; rsi - pointer to `a` vector
@@ -193,14 +192,13 @@ global test_normalize
 
 
 quadruple_add_avx:
+	vpxor		ymm15,	ymm15,	ymm15
+	vmovdqu		[rsp-64],	ymm15
 ; divide count by 2 rounding up
 	add	edi,	1
 	shr	edi,	1
-	align 32
+	align	32
 .loop:
-	vpxor		ymm15,	ymm15,	ymm15
-	vmovdqu		[rsp-64],	ymm15
-
 ; load data
 	vmovdqa		ymm0,	[rsi]
 	vmovdqa		ymm1,	[rdx]
@@ -271,14 +269,13 @@ quadruple_add_avx:
 
 
 quadruple_sub_avx:
+	vpxor		ymm15,	ymm15,	ymm15
+	vmovdqu		[rsp-64],	ymm15
 ; divide count by 2 rounding up
 	add	edi,	1
 	shr	edi,	1
-	align 32
+	align	32
 .loop:
-	vpxor		ymm15,	ymm15,	ymm15
-	vmovdqu		[rsp-64],	ymm15
-
 ; load data
 	vmovdqa		ymm0,	[rsi]
 	vmovdqa		ymm1,	[rdx]
@@ -352,6 +349,112 @@ quadruple_sub_avx:
 
 
 quadruple_mul_avx:
+	vpxor		ymm15,	ymm15,	ymm15
+	vmovdqu		[rsp-64],	ymm15
+
+; divide count by 2 rounding up
+	add	edi,	1
+	shr	edi,	1
+	align	32
+.loop:
+; load data
+	vmovdqa		ymm0,	[rsi]
+	vmovdqa		ymm1,	[rdx]
+
+; extract fractions
+; reads: ymm0, ymm1
+; out: ymm2, ymm3 (first and second pair of fractions)
+	efrac		ymm2,	ymm0,	ymm4,	ymm5
+	efrac		ymm3,	ymm1,	ymm4,	ymm5
+
+; extract exponents
+; reads: ymm0, ymm1
+; out: ymm3, ymm4 (first and second pair of exponents)
+	vpand		ymm4,	ymm0,	[exp]
+	vpand		ymm5,	ymm1,	[exp]
+
+; get new sign
+; reads: ymm0, ymm1
+; out: ymm14 (new sign)
+	vpand		ymm6,	ymm0,	[sign]
+	vpand		ymm7,	ymm1,	[sign]
+	vpxor		ymm14,	ymm6,	ymm7
+
+; add exponents
+; reads: ymm3, ymm4
+; out: ymm0 (sum of exponents)
+	vpaddw		ymm0,	ymm4,	ymm5
+	vpsubw		ymm0,	ymm0,	[exp_bias]
+
+; multiply fractions
+; reads: ymm2, ymm3
+; writes: ymm15
+;
+; free: ymm1, ymm4, ymm5, ...
+;
+; ymm2 = [x4, x3, x2, x1] * 2
+; ymm3 = [y4, y3, y2, y1] * 2
+	vpshufd		ymm1,	ymm2,	00000000b	; ymm1 = [## x1 ## x1]
+	vpshufd		ymm4,	ymm2,	01010101b	; ymm4 = [## x2 ## x2]
+	vpshufd		ymm5,	ymm2,	10101010b	; ymm5 = [## x3 ## x3]
+	vpshufd		ymm6,	ymm2,	11111111b	; ymm6 = [## x4 ## x4]
+	vpshufd		ymm7,	ymm3,	00110001b	; ymm7 = [## y4 ## y2]
+
+	;int3
+	vpmuldq		ymm8,	ymm1,	ymm3		; ymm8 =  [x1*y3, x1*y1]
+	vpmuldq		ymm1,	ymm1,	ymm7		; ymm1 =  [x1*y4, x1*y2]
+	vpmuldq		ymm9,	ymm4,	ymm3		; ymm9 =  [x2*y3, x2*y1]
+	vpmuldq		ymm4,	ymm4,	ymm7		; ymm4 =  [x2*y4, x2*y2]
+	vpmuldq		ymm10,	ymm5,	ymm3		; ymm10 = [x3*y3, x3*y1]
+	vpmuldq		ymm5,	ymm5,	ymm7		; ymm5 =  [x3*y4, x3*y2]
+	vpmuldq		ymm11,	ymm6,	ymm3		; ymm11 = [x4*y3, x4*y1]
+	vpmuldq		ymm6,	ymm6,	ymm7		; ymm6 =  [x4*y4, x4*y2]
+	;int3
+
+	vmovdqa		ymm15,	ymm8
+	vpsrldq		ymm15,	ymm15,	4
+
+	vpadddq		ymm8,	ymm1,	ymm9,	ymm12,	ymm13
+	vpadddq		ymm1,	ymm15,	ymm8,	ymm12,	ymm13
+	vpsrldq		ymm15,	ymm1,	4
+
+	vpadddq		ymm8,	ymm4,	ymm10,	ymm12,	ymm13
+	vpadddq		ymm1,	ymm15,	ymm8,	ymm12,	ymm13
+	vpsrldq		ymm15,	ymm1,	4
+
+	vpadddq		ymm8,	ymm5,	ymm11,	ymm12,	ymm13
+	vpadddq		ymm1,	ymm15,	ymm8,	ymm12,	ymm13
+	vpsrldq		ymm15,	ymm1,	4
+
+	;int3
+	vpadddq		ymm1,	ymm15,	ymm6,	ymm12,	ymm13
+	vpslldq		ymm15,	ymm1,	2
+
+; normalize result
+	normalize	ymm15,	ymm7,	ymm8,	ymm2,	ymm3,	ymm4,	ymm5,	ymm6
+; calc mask for exponent
+	vpxor		ymm9,	ymm9,	ymm9
+	vpcmpeqq	ymm11,	ymm11,	ymm11
+	vpcmpeqq	ymm10,	ymm1,	ymm9
+	vpshufd		ymm1,	ymm1,	01001110b
+	vpcmpeqq	ymm1,	ymm1,	ymm9
+	vpand		ymm1,	ymm1,	ymm10
+	vpxor		ymm1,	ymm1,	ymm11
+; calc new exponent
+	vpaddd		ymm0,	ymm0,	ymm7
+	vpand		ymm0,	ymm0,	ymm1
+	vpor		ymm15,	ymm15,	ymm14
+	vpor		ymm15,	ymm15,	ymm0
+
+; save result
+	vmovdqa		[rcx],	ymm15
+
+; loop epilog
+	add	rsi,	32
+	add	rdx,	32
+	add	rcx,	32
+	sub	edi,	1
+	jnz	.loop
 	rep ret
 
 
@@ -435,3 +538,5 @@ align 32
 	first_8_bits:	dq	0x00000000000000FF, 0x0000000000000000, 0x00000000000000FF, 0x0000000000000000
 	positive_64:	dq	0x0000000000000040, 0x0000000000000040, 0x0000000000000040, 0x0000000000000040
 	value_15:	dq	0x000000000000000F, 0x0000000000000000, 0x000000000000000F, 0x0000000000000000
+	exp_bias:	dq	0x0000000000000000, 0x3fff000000000000, 0x0000000000000000, 0x3fff000000000000
+	least_32_bits:	dq	0x000000000000FFFF, 0x0000000000000000, 0x000000000000FFFF, 0x0000000000000000

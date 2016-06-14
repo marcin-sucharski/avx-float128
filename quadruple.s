@@ -400,7 +400,6 @@ quadruple_mul_avx:
 	vpshufd		ymm6,	ymm2,	11111111b	; ymm6 = [## x4 ## x4]
 	vpshufd		ymm7,	ymm3,	00110001b	; ymm7 = [## y4 ## y2]
 
-	;int3
 	vpmuldq		ymm8,	ymm1,	ymm3		; ymm8 =  [x1*y3, x1*y1]
 	vpmuldq		ymm1,	ymm1,	ymm7		; ymm1 =  [x1*y4, x1*y2]
 	vpmuldq		ymm9,	ymm4,	ymm3		; ymm9 =  [x2*y3, x2*y1]
@@ -409,7 +408,6 @@ quadruple_mul_avx:
 	vpmuldq		ymm5,	ymm5,	ymm7		; ymm5 =  [x3*y4, x3*y2]
 	vpmuldq		ymm11,	ymm6,	ymm3		; ymm11 = [x4*y3, x4*y1]
 	vpmuldq		ymm6,	ymm6,	ymm7		; ymm6 =  [x4*y4, x4*y2]
-	;int3
 
 	vmovdqa		ymm15,	ymm8
 	vpsrldq		ymm15,	ymm15,	4
